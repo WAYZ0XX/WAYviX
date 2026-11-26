@@ -15,6 +15,9 @@
 #     shader load and atomic). 3.31 -> 3.46 fps, copying back 73 -> 43 ms.
 #   VICTORY_D3D12_BACKGROUND=0: the driver stops re-optimising shaders on 4 threads at ~90% each
 #     beside the game. 3.46 -> 4.14 fps, preparing 85 -> 57 ms.
+#   VICTORY_SUBMIT_FRAMES=2 / VICTORY_SUBMIT_DEPTH=128: the title starts its next frame while ours
+#     prepares the last one (default 1: they took turns, 197 ms a frame waiting at presents).
+#     4.10 -> 4.59 fps, 0 ms at presents.
 # VICTORY_AMBIENT_AIR=1 bounds the blue sky light the air holds without rays.
 # NVIDIA fixes: low 4 GiB kept at start (#157), clear rectangles 16 at a time (#185).
 param([switch]$NoWarm)
@@ -31,4 +34,5 @@ if (-not $NoWarm -and (Test-Path $victory)) {
     VICTORY_TEXTURE_ROOM_PERCENT = '95'; VICTORY_WINDOW_MAX = '1920x1080'; VICTORY_OUTPUT = '1920x1080'
     VICTORY_PIPELINE_BOOK = '1'; VICTORY_PIPELINE_WAIT_MS = '24'
     VICTORY_CARD_BUFFERS_MIN_KB = '64'; VICTORY_CARD_BUFFERS_MB = '1536'; VICTORY_D3D12_BACKGROUND = '0'
+    VICTORY_SUBMIT_FRAMES = '2'; VICTORY_SUBMIT_DEPTH = '128'
 }
