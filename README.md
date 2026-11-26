@@ -1,4 +1,72 @@
-# VIctory on an RX 7900 XTX
+# WAYviX
+
+**WAYviX** is a fork of [Belobug/VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)
+(itself a fork of [VIctory](https://github.com/Marvisak/VIctory)), a compatibility layer
+that runs an Xbox Series title natively on Windows from files the user supplies.
+This fork is tuned for **NVIDIA cards with 8 GB of video memory** and **32 GB of RAM**.
+
+**This repository contains no game files, code or assets.** You need your own copy
+of the game. It is not affiliated with or endorsed by the game's developer or publisher.
+
+## Where it stands (2026-11-26)
+
+Tested on one machine: Windows 11, Intel Core i5-12600KF, 32 GB RAM, NVIDIA
+GeForce RTX 2070 SUPER (8 GB), ray tracing off, 40 GB page file.
+
+| | |
+|---|---|
+| Frame rate in the world | **5-9 fps** (4.8-6.3 fps in 5-minute measured runs, 9 fps peaks in the first cutscene) |
+| Textures | almost all loaded; those that do not fit in the 8 GB go to RAM (`VICTORY_TEXTURE_SPILL`) |
+| Facial expressions | **not working**: faces stay frozen (see below) |
+| Known glitches | an occasional green flash in the first cutscene; some NPC faces with coloured polygons |
+| Memory | about 26 GB private; a page file of 40 GB on a drive with room is needed with 32 GB of RAM |
+
+Not working yet on NVIDIA: a few console compute programs written for 64-lane waves,
+which the NVIDIA driver refuses (4 programs) or the translator cannot convert
+(3 programs). Facial animation is very likely among them.
+
+## What this fork changes
+
+Measured one change at a time, five-minute runs in the world:
+
+| Change | fps |
+|---|---|
+| Belobug's defaults on the RTX 2070 SUPER | 2.2 |
+| New pipelines waited for 24 ms at most per frame (`VICTORY_PIPELINE_WAIT_MS`) | 3.3 |
+| Every title buffer from 64 KiB in video memory (`VICTORY_CARD_BUFFERS_MIN_KB`) | 3.5 |
+| The driver's background shader work off (`VICTORY_D3D12_BACKGROUND=0`) | 4.1 |
+| Two frames in flight (`VICTORY_SUBMIT_FRAMES=2`) | 4.6 |
+| `shadow::exact`: host buffers made outside the global lock, idle copies swept amortised | 6.0-6.3 |
+
+Code changes:
+
+- **Textures in RAM when the card is full** (`VICTORY_TEXTURE_SPILL=1`): textures the title
+  fills go to a system-memory heap (pool L0) instead of staying missing; stops while less than
+  `VICTORY_TEXTURE_SPILL_KEEP_MB` (6144) of commit is left. Aliasing barriers are given only
+  to textures placed in a block (NVIDIA refused the list otherwise).
+- **Translation threads no longer queue on one lock** (`shadow::exact`).
+- **NVIDIA fixes ported** from Belobug pull requests: address space below 4 GiB kept at start
+  (#157), clear rectangles 16 at a time (#185).
+- **`VICTORY_WAVE_WIDE_ONLY=<hash>,...`**: the wide wave64 form for listed shaders alone.
+- **`scripts/play.ps1 -Console series-s|series-x`**.
+
+## How to run it
+
+1. Build: `cargo build --locked --profile diag -p victory --features diagnostics`
+2. Copy `victory.example.toml` to `victory.toml` and set your paths (outside this folder).
+3. Prepare the shaders once: `target\diagictory.exe shaders <the shader archives>`,
+   then `target\diagictory.exe warm` (all known pipelines, about an hour once).
+4. In the NVIDIA Control Panel, set **Shader Cache Size** to **Unlimited**.
+5. Edit the game path in `Lancer-NVIDIA.ps1`, then run it from a normal (not administrator)
+   PowerShell window. It builds new pipelines first (`warm --used`), then starts the game with
+   every setting above.
+
+---
+
+# Upstream notes (Belobug/VIctory-Belobug-AMD)
+
+The rest of this file is Belobug's README, kept as it was.
+
 
 A fork of [VIctory](https://github.com/Marvisak/VIctory), a compatibility layer
 that runs an Xbox Series title natively on Windows from files the user supplies.
