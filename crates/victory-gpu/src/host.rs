@@ -6963,7 +6963,7 @@ impl HostList {
             let key = std::sync::Arc::as_ptr(copy) as usize;
             // A texture cut from a block may lie where another did: what the card
             // holds of that one is done with before the first upload into this one.
-            if crate::pool::on() && *first_upload {
+            if crate::pool::on() && *first_upload && crate::pool::in_block(&copy.texture) {
                 aliasing.push(D3D12_RESOURCE_BARRIER {
                     Type: D3D12_RESOURCE_BARRIER_TYPE_ALIASING,
                     Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,

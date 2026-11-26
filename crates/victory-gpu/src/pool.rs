@@ -623,9 +623,22 @@ pub(crate) fn begun_before(texture: &ID3D12Resource) -> Option<u64> {
     unseen.get(&raw).copied().filter(|&begun| begun > finished)
 }
 
+/// The private-data key under which a texture cut from a block keeps its piece.
+const PIECE_KEY: GUID = GUID::from_u128(0x6f0e2f0c_5a59_4b1e_9a3f_7f4d2c9be713);
+
+/// Whether `texture` was cut from a block (placed in a heap), the only kind an
+/// aliasing barrier may name: a committed texture there (the PC's memory,
+/// `VICTORY_TEXTURE_SPILL`, or one the pool refused) makes the host refuse the
+/// whole list with E_INVALIDARG on NVIDIA.
+pub(crate) fn in_block(texture: &ID3D12Resource) -> bool {
+    let mut size = 0u32;
+    // SAFETY: a size query; no data is written.
+    unsafe { texture.GetPrivateData(&PIECE_KEY, &mut size, None) }.is_ok() && size > 0
+}
+
 /// Makes `texture` give `piece` back when the last reference to it goes.
 fn give_back_with(texture: &ID3D12Resource, piece: Piece) {
-    const KEY: GUID = GUID::from_u128(0x6f0e2f0c_5a59_4b1e_9a3f_7f4d2c9be713);
+    const KEY: GUID = PIECE_KEY;
     let made = Box::into_raw(Box::new(Reclaim { methods: &RECLAIM.0, references: AtomicU32::new(1), piece }));
     // SAFETY: a COM object of ours with one reference, which this takes and
     // drops at the end; the texture takes its own.
