@@ -25,7 +25,10 @@
 #   for the facial animation. Measured: no device loss in 5 minutes.
 # -KeepTextures: textures in the PC's memory stay 30 s without use (VICTORY_TEXTURE_SPILL_KEEP_S),
 #   so a cutscene that cuts away and back finds them; measured 209 -> 232 ms a frame.
-param([switch]$NoWarm, [switch]$Faces, [switch]$KeepTextures)
+# -SpillTextures: textures that do not fit in the card's 8 GB go to RAM (VICTORY_TEXTURE_SPILL).
+#   OFF by default: screenshots of the first cutscene showed some of them as coloured noise (an
+#   NPC's face at 1:50); without it the same face is dark until its texture fits.
+param([switch]$NoWarm, [switch]$Faces, [switch]$KeepTextures, [switch]$SpillTextures)
 $victory = Join-Path $PSScriptRoot 'target\diag\victory.exe'
 if (-not $NoWarm -and (Test-Path $victory)) {
     Write-Host 'Preparing new shaders (warm --used)...'
@@ -41,7 +44,7 @@ $log = Join-Path $logs ('play-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
 Write-Host "Starting the game. Its log: $log"
 & "$PSScriptRoot\scripts\play.ps1" -Exe 'D:\victory-data\game\game_scarlett_master.exe' -Console series-s -More @{
     VICTORY_D3D12_ADAPTER = 'NVIDIA'; VICTORY_AMBIENT = '1'; VICTORY_AMBIENT_AIR = '1'
-    VICTORY_TEXTURE_SPILL = '1'; VICTORY_TEXTURE_SPILL_KEEP_MB = '6144'
+    VICTORY_TEXTURE_SPILL = $(if ($SpillTextures) { '1' } else { '0' }); VICTORY_TEXTURE_SPILL_KEEP_MB = '6144'
     VICTORY_TEXTURE_ROOM_PERCENT = '95'; VICTORY_WINDOW_MAX = '1920x1080'; VICTORY_OUTPUT = '1920x1080'
     VICTORY_PIPELINE_BOOK = '1'; VICTORY_PIPELINE_WAIT_MS = '24'
     VICTORY_CARD_BUFFERS_MIN_KB = '64'; VICTORY_CARD_BUFFERS_MB = '1536'; VICTORY_D3D12_BACKGROUND = '0'
