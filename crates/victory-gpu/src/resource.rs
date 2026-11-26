@@ -1,4 +1,4 @@
-//! Heaps, committed and placed resources, and resource sizes.
+﻿//! Heaps, committed and placed resources, and resource sizes.
 //!
 //! Heaps and resources are host memory and a resource's GPU address is its
 //! CPU address, as on the console; textures also get a host copy, and
@@ -1753,7 +1753,7 @@ pub(crate) fn host_made<'a>(
 
 /// Unconditional host-texture floor for a given local VRAM budget (`None` when
 /// the adapter does not report one): up to 2 GiB, capped at a quarter of the
-/// reported budget so 4–6 GiB cards do not bypass the budget check early.
+/// reported budget so 4â€“6 GiB cards do not bypass the budget check early.
 #[cfg(any(windows, test))]
 fn texture_floor_bytes(vram_budget: Option<u64>) -> u64 {
     const MAX_FLOOR: u64 = 2 << 30;
@@ -2203,6 +2203,34 @@ pub(crate) fn card_accounting(room: bool, due: [u64; 5], never: Vec<(u64, u64)>,
 /// Called before a submission starts, by the thread that submits.
 /// `VICTORY_TEXTURE_SWEEP=0` lets nothing go.
 #[cfg(windows)]
+/// How long a host texture in the PC's memory stays without use before it is
+/// let go (`VICTORY_TEXTURE_SPILL_KEEP_S`; 0, the default: as any other, a
+/// second under the card's pressure). 30 s keeps a cutscene's place across a
+/// cut away and back (let go: 2.4 -> 1.1 GB in five minutes) for some frame
+/// rate (209 -> 232 ms a frame: those textures stay in the slower memory).
+#[cfg(windows)]
+fn spill_keep_ms() -> u64 {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| {
+        std::env::var("VICTORY_TEXTURE_SPILL_KEEP_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0) * 1000
+    })
+}
+
+/// Whether `texture` lies in the PC's memory (a custom heap of pool L0: one
+/// made there by [`spill`]).
+#[cfg(windows)]
+fn in_pc_memory(texture: &windows::Win32::Graphics::Direct3D12::ID3D12Resource) -> bool {
+    use windows::Win32::Graphics::Direct3D12::{D3D12_HEAP_PROPERTIES, D3D12_HEAP_TYPE_CUSTOM, D3D12_MEMORY_POOL_L0};
+    if !spill() {
+        return false;
+    }
+    let mut props = D3D12_HEAP_PROPERTIES::default();
+    // SAFETY: a live resource; a reserved one answers with an error.
+    unsafe { texture.GetHeapProperties(Some(&mut props), None) }.is_ok()
+        && props.Type == D3D12_HEAP_TYPE_CUSTOM
+        && props.MemoryPoolPreference == D3D12_MEMORY_POOL_L0
+}
+
 pub(crate) fn let_go_idle() {
     use std::sync::atomic::Ordering::Relaxed;
     const IDLE_FRAMES: u64 = 4;
@@ -2286,7 +2314,17 @@ pub(crate) fn let_go_idle() {
         }
         let gone = {
             let mut made = r.host.made.lock().unwrap_or_else(|e| e.into_inner());
-            let idle = made.as_ref().is_some_and(|(host, _)| {
+            // A copy in the PC's memory (`VICTORY_TEXTURE_SPILL`) takes none of
+            // the card's: kept for minutes while commit allows, not the second
+            // the card's pressure gives copies on it. A cutscene that cuts away
+            // and back found its textures gone and made and uploaded them again.
+            let in_pc_kept = made.as_ref().is_some_and(|(host, _)| {
+                spill_keep_ms() > 0
+                    && in_pc_memory(&host.texture)
+                    && !crate::host::long_ago(r.host.used.load(Relaxed), spill_keep_ms(), IDLE_FRAMES)
+                    && spills_now()
+            });
+            let idle = !in_pc_kept && made.as_ref().is_some_and(|(host, _)| {
                 crate::host::long_ago(r.host.used.load(Relaxed), idle_ms, IDLE_FRAMES)
                     && std::sync::Arc::strong_count(host) == 1
                     && crate::host::references(&host.texture) == 1
