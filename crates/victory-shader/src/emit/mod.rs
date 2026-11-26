@@ -398,6 +398,23 @@ pub struct UserData {
 /// numbers they compute (`lower::with_mask_ops_on_numbers`), and only such
 /// a program: with that on for every program, 69 compute programs that
 /// already translated came out changed (`CS_RaytracingResolve`, ...).
+thread_local! {
+    /// The wide form for the program translated on this thread now ([`with_wide`]).
+    static WIDE_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with the wide form of a console wave run as two host waves on
+/// (as `VICTORY_WAVE_WIDE=1` has it for every program), for the programs it
+/// translates on this thread alone: for programs no other form takes on a
+/// card of 32 lanes, which the driver then refuses as 64-lane programs,
+/// while every other program keeps the form it has.
+pub fn with_wide<T>(f: impl FnOnce() -> T) -> T {
+    let before = WIDE_HERE.with(|w| w.replace(true));
+    let out = f();
+    WIDE_HERE.with(|w| w.set(before));
+    out
+}
+
 pub fn translate(container: &[u8]) -> Result<HostShader, ShaderError> {
     match translate_plain(container) {
         Err(ShaderError::Unsupported { what, .. }) if what == lower::FIRST_HALF => {
@@ -542,7 +559,7 @@ pub fn emit(
         // lost the card in a submission of two programs that had just moved to it
         // (`ptfx_CS_lightAtlas_Sprite` and `_Trail`). The 32-lane programs' form below, which
         // has no barrier, stays on.
-        let wide_on = std::env::var_os("VICTORY_WAVE_WIDE").is_some_and(|v| v == "1");
+        let wide_on = std::env::var_os("VICTORY_WAVE_WIDE").is_some_and(|v| v == "1") || WIDE_HERE.with(std::cell::Cell::get);
         // exact first: each host wave on its own where that is exact (the idiom, every
         // form; no barriers), then the other exact forms; then approximate
         for exact in [true, false] {

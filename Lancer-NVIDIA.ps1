@@ -20,7 +20,10 @@
 #     4.10 -> 4.59 fps, 0 ms at presents.
 # VICTORY_AMBIENT_AIR=1 bounds the blue sky light the air holds without rays.
 # NVIDIA fixes: low 4 GiB kept at start (#157), clear rectangles 16 at a time (#185).
-param([switch]$NoWarm)
+# -Faces: the console wave64 program 369cbe906ea72764, which the NVIDIA driver refused at every
+#   frame, translated in the fork's wide form for it alone (VICTORY_WAVE_WIDE_ONLY); a candidate
+#   for the facial animation. Measured: no device loss in 5 minutes.
+param([switch]$NoWarm, [switch]$Faces)
 $victory = Join-Path $PSScriptRoot 'target\diag\victory.exe'
 if (-not $NoWarm -and (Test-Path $victory)) {
     Write-Host 'Preparing new shaders (warm --used)...'
@@ -35,4 +38,5 @@ if (-not $NoWarm -and (Test-Path $victory)) {
     VICTORY_PIPELINE_BOOK = '1'; VICTORY_PIPELINE_WAIT_MS = '24'
     VICTORY_CARD_BUFFERS_MIN_KB = '64'; VICTORY_CARD_BUFFERS_MB = '1536'; VICTORY_D3D12_BACKGROUND = '0'
     VICTORY_SUBMIT_FRAMES = '2'; VICTORY_SUBMIT_DEPTH = '128'
+    VICTORY_WAVE_WIDE_ONLY = $(if ($Faces) { '369cbe906ea72764' } else { '' })
 }

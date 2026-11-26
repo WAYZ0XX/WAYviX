@@ -174,9 +174,33 @@ pub fn precompile(container: &[u8]) -> Result<bool, String> {
 /// there is one.
 pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
     let translate = |c: &[u8]| victory_shader::emit::translate(c).map_err(|e| e.to_string());
+    // `VICTORY_WAVE_WIDE_ONLY=<hash>,<hash>,...` (the 16 hex digits a run's log
+    // names a shader by): those programs alone in the wide form, translated
+    // every run and never cached, so that the cache of every other one stays.
+    if wide_only(container) {
+        tracing::info!("a shader translated in the wide form (VICTORY_WAVE_WIDE_ONLY)");
+        return victory_shader::emit::with_wide(|| translate(container));
+    }
     match CACHE.get() {
         Some(cache) => cached(cache, &build(), container, translate, refresh_in_runs()),
         None => translate(container),
+    }
+}
+
+/// Whether `container` is one of `VICTORY_WAVE_WIDE_ONLY`'s.
+fn wide_only(container: &[u8]) -> bool {
+    static LIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let list = LIST.get_or_init(|| {
+        std::env::var("VICTORY_WAVE_WIDE_ONLY")
+            .unwrap_or_default()
+            .split(',')
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect()
+    });
+    !list.is_empty() && {
+        let hash = blake3::hash(container).to_hex();
+        list.iter().any(|h| hash.starts_with(h.as_str()))
     }
 }
 
