@@ -9,6 +9,12 @@
 #   2. in game, VICTORY_PIPELINE_BOOK=1 records every new pipeline for the next warm-up;
 #   3. VICTORY_PIPELINE_WAIT_MS=24: a frame waits at most 24 ms for a pipeline still being built
 #      (500 by default: whole-second freezes); the object shows a frame or two later instead.
+# Smoothness on NVIDIA (measured, 5-minute runs in the world, 3.3 -> 4.1 fps):
+#   VICTORY_CARD_BUFFERS_MIN_KB=64 / _MB=1536: every title buffer from 64 KiB in the card's memory
+#     (default on 8 GB cards: 16 MiB and up, 512 MiB in all; the rest crossed the bus at every
+#     shader load and atomic). 3.31 -> 3.46 fps, copying back 73 -> 43 ms.
+#   VICTORY_D3D12_BACKGROUND=0: the driver stops re-optimising shaders on 4 threads at ~90% each
+#     beside the game. 3.46 -> 4.14 fps, preparing 85 -> 57 ms.
 # VICTORY_AMBIENT_AIR=1 bounds the blue sky light the air holds without rays.
 # NVIDIA fixes: low 4 GiB kept at start (#157), clear rectangles 16 at a time (#185).
 param([switch]$NoWarm)
@@ -24,4 +30,5 @@ if (-not $NoWarm -and (Test-Path $victory)) {
     VICTORY_TEXTURE_SPILL = '1'; VICTORY_TEXTURE_SPILL_KEEP_MB = '6144'
     VICTORY_TEXTURE_ROOM_PERCENT = '95'; VICTORY_WINDOW_MAX = '1920x1080'; VICTORY_OUTPUT = '1920x1080'
     VICTORY_PIPELINE_BOOK = '1'; VICTORY_PIPELINE_WAIT_MS = '24'
+    VICTORY_CARD_BUFFERS_MIN_KB = '64'; VICTORY_CARD_BUFFERS_MB = '1536'; VICTORY_D3D12_BACKGROUND = '0'
 }
