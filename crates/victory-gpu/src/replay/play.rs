@@ -2905,7 +2905,14 @@ impl Player {
                     let rects: Vec<RECT> = rects.iter().map(|r| to_rect(*r)).collect();
                     let rects = (!rects.is_empty()).then_some(&rects[..]);
                     if self.objects.contains_key(&v.res) {
-                        l.ClearRenderTargetView(view(v), color, rects);
+                        match rects {
+                            Some(all) if all.len() > 16 => {
+                                for part in all.chunks(16) {
+                                    l.ClearRenderTargetView(view(v), color, Some(part));
+                                }
+                            }
+                            _ => l.ClearRenderTargetView(view(v), color, rects),
+                        }
                     }
                 }
                 Cmd::Discard {

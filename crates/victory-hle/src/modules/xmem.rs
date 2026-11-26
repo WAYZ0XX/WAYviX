@@ -84,6 +84,59 @@ fn address_range(flags: u64) -> (usize, usize) {
     (1 << 32, (1 << bits) - 1)
 }
 
+/// Address space below 4 GiB kept free from the start of the run for the
+/// title's 32-bit graphics memory (start, bytes). The graphics driver takes
+/// pieces of the low 4 GiB at start-up; on NVIDIA the title's first 32-bit
+/// reservation then found no room and the title stopped at its start.
+/// Released at the title's first 32-bit request. (Port of
+/// Belobug/VIctory-Belobug-AMD#157.)
+static LOW_KEPT: Mutex<Option<(usize, usize)>> = Mutex::new(None);
+
+/// Keeps `VICTORY_LOW_RESERVE_MB` (1024 by default, 0 for none) of address
+/// space below 4 GiB free for the title, or half or a quarter of it if that
+/// much is not free in one piece. Called before anything else of the run.
+pub fn reserve_low_memory() {
+    let mb = std::env::var("VICTORY_LOW_RESERVE_MB")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(1024);
+    if mb == 0 {
+        return;
+    }
+    for size in [mb << 20, mb << 19, mb << 18] {
+        let mut requirements = MEM_ADDRESS_REQUIREMENTS {
+            LowestStartingAddress: std::ptr::null_mut(),
+            HighestEndingAddress: u32::MAX as usize as *mut c_void,
+            Alignment: 0,
+        };
+        // SAFETY: plain data.
+        let mut parameter: MEM_EXTENDED_PARAMETER = unsafe { std::mem::zeroed() };
+        parameter.Anonymous1._bitfield = MemExtendedParameterAddressRequirements as u64;
+        parameter.Anonymous2.Pointer = (&raw mut requirements).cast();
+        // SAFETY: a reservation of our own, no access; the parameter points
+        // at `requirements`, which outlives the call.
+        let at = unsafe {
+            VirtualAlloc2(GetCurrentProcess(), std::ptr::null(), size, MEM_RESERVE, PAGE_NOACCESS, &mut parameter, 1)
+        };
+        if !at.is_null() {
+            tracing::info!(at = format_args!("{at:p}"), mb = size >> 20, "address space below 4 GiB kept for the title");
+            *LOW_KEPT.lock().unwrap_or_else(|e| e.into_inner()) = Some((at as usize, size));
+            return;
+        }
+    }
+    tracing::warn!(mb, "no address space below 4 GiB could be kept for the title");
+}
+
+/// Gives the address space [`reserve_low_memory`] kept back, once.
+fn release_low_memory() {
+    let kept = LOW_KEPT.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some((at, size)) = kept {
+        // SAFETY: our own reservation, nothing in it.
+        unsafe { VirtualFree(at as *mut c_void, 0, MEM_RELEASE) };
+        tracing::info!(at = format_args!("{at:#x}"), mb = size >> 20, "address space below 4 GiB given to the title");
+    }
+}
+
 pub extern "system" fn XMemVirtualAlloc(
     base: *mut c_void,
     size: usize,
@@ -92,6 +145,9 @@ pub extern "system" fn XMemVirtualAlloc(
     protect: u32,
 ) -> *mut c_void {
     let (lowest, highest) = address_range(flags);
+    if highest <= u32::MAX as usize {
+        release_low_memory();
+    }
     let mut requirements = MEM_ADDRESS_REQUIREMENTS {
         LowestStartingAddress: lowest as *mut c_void,
         HighestEndingAddress: highest as *mut c_void,

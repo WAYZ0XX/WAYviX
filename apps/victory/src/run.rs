@@ -56,6 +56,9 @@ pub fn run(
     }
     // A title that relaunched itself: the old process must be gone first.
     victory_hle::modules::lifecycle::wait_for_previous();
+    // Before the graphics driver and the rest take pieces of it.
+    #[cfg(windows)]
+    victory_hle::modules::xmem::reserve_low_memory();
     let cfg = victory_core::Config::load()?;
     let fsr = fsr_4k::FsrPreset::requested()?;
     let original = std::fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;

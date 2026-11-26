@@ -1852,6 +1852,98 @@ pub(crate) fn room_lately() -> bool {
     room
 }
 
+/// Whether the card's budget is used up for textures picked by index (the
+/// last answer of [`room`] to the draw pass): new textures the title fills
+/// then go to the PC's memory ([`spills_now`]).
+#[cfg(windows)]
+static CARD_FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Bytes of textures made in the PC's memory, and how many.
+#[cfg(windows)]
+static SPILLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(windows)]
+static SPILLED_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether textures the title fills may go to the PC's memory, read by the
+/// card across the bus, once the card is full (`VICTORY_TEXTURE_SPILL=1`; off
+/// by default). Meant for cards with less memory than the title's 10 GB or
+/// so (8 GB: textures otherwise stay missing). Slower to sample than the
+/// card's own memory, but drawn.
+#[cfg(windows)]
+pub(crate) fn spill() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let on = std::env::var("VICTORY_TEXTURE_SPILL").is_ok_and(|v| v.trim() == "1");
+        if on {
+            tracing::info!(keep_mb = spill_keep() >> 20, "textures go to the PC's memory once the card is full (VICTORY_TEXTURE_SPILL=1)");
+        }
+        on
+    })
+}
+
+/// Commit kept free for Windows and the rest of the run, below which no more
+/// textures go to the PC's memory (`VICTORY_TEXTURE_SPILL_KEEP_MB`, 6144):
+/// the run never takes the system to its commit limit for them.
+#[cfg(windows)]
+fn spill_keep() -> u64 {
+    static KEEP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *KEEP.get_or_init(|| {
+        std::env::var("VICTORY_TEXTURE_SPILL_KEEP_MB")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(6144)
+            << 20
+    })
+}
+
+/// Whether a texture may go to the PC's memory now: [`spill`] is on and
+/// commit beyond [`spill_keep`] is left (asked at most every 100 ms).
+#[cfg(windows)]
+pub(crate) fn spills_now() -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    if !spill() {
+        return false;
+    }
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    static ASKED: AtomicU64 = AtomicU64::new(u64::MAX);
+    static LEFT: AtomicU64 = AtomicU64::new(0);
+    let now = START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
+    let asked = ASKED.load(Relaxed);
+    if asked == u64::MAX || now.saturating_sub(asked) >= 100 {
+        // SAFETY: plain data.
+        let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        m.dwLength = size_of::<MEMORYSTATUSEX>() as u32;
+        // SAFETY: a sized structure of our own.
+        if unsafe { GlobalMemoryStatusEx(&mut m) } != 0 {
+            LEFT.store(m.ullAvailPageFile, Relaxed);
+        }
+        ASKED.store(now, Relaxed);
+    }
+    let ok = LEFT.load(Relaxed) > spill_keep();
+    if !ok {
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| tracing::warn!("no more textures go to the PC's memory: commit is short (VICTORY_TEXTURE_SPILL_KEEP_MB)"));
+    }
+    ok
+}
+
+/// Textures made in the PC's memory so far (count, bytes).
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn spilled() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (SPILLED_COUNT.load(Relaxed), SPILLED.load(Relaxed))
+}
+
+/// For the draw pass: whether more host textures may be made, the card's own
+/// room ([`room`]) or, past it, the PC's memory ([`spills_now`]).
+#[cfg(windows)]
+pub(crate) fn room_or_spill(memory: Option<[u64; 4]>) -> bool {
+    let card = room(memory);
+    CARD_FULL.store(!card, std::sync::atomic::Ordering::Relaxed);
+    card || spills_now()
+}
+
 /// The share of the card's budget, in percent, up to which host copies of
 /// textures picked by index are made ([`room`]): 90 unless
 /// `VICTORY_TEXTURE_ROOM_PERCENT` says another (50 to 97). At 90 about a
@@ -2580,6 +2672,59 @@ fn host_texture_as(
         Type: D3D12_HEAP_TYPE_DEFAULT,
         ..Default::default()
     };
+    // The card is full (`VICTORY_TEXTURE_SPILL=1`): a texture the title fills,
+    // with no target, depth or unordered access, goes to the PC's memory
+    // (pool L0, which the card reads across the bus), not into a block.
+    if !reserved
+        && d.flags & (TARGET | DEPTH | UNORDERED) == 0
+        && d.sample_count <= 1
+        && clear_value.is_none()
+        && fills(desc)
+        && CARD_FULL.load(std::sync::atomic::Ordering::Relaxed)
+        && spills_now()
+    {
+        let pc = D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_CUSTOM,
+            CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,
+            MemoryPoolPreference: D3D12_MEMORY_POOL_L0,
+            ..Default::default()
+        };
+        let mut texture: Option<ID3D12Resource> = None;
+        // SAFETY: the description has the host layout; the out pointer is ours.
+        let made = unsafe {
+            host.device.CreateCommittedResource(
+                &pc,
+                D3D12_HEAP_FLAG_NONE,
+                (&raw const d).cast(),
+                D3D12_RESOURCE_STATES(crate::host::legal_for(d.flags, crate::host::texture_state(state)) as i32),
+                None,
+                &mut texture,
+            )
+        };
+        match (made, texture) {
+            (Ok(()), Some(t)) => {
+                // SAFETY: the description has the host layout; a plain query.
+                let bytes = unsafe {
+                    host.device.GetResourceAllocationInfo(0, &[(&raw const d).cast::<D3D12_RESOURCE_DESC>().read()])
+                }
+                .SizeInBytes;
+                let n = SPILLED_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                let all = SPILLED.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes;
+                if n == 1 || n.is_multiple_of(1000) {
+                    tracing::info!(textures = n, mb = all >> 20, "textures made in the PC's memory, the card being full");
+                }
+                crate::host::name(&t, || {
+                    format!("texture {}x{} f{} flags {:#x} (in the PC's memory)", d.width, d.height, d.format, d.flags)
+                });
+                return Some(t);
+            }
+            (Err(e), _) => {
+                static SAID: std::sync::Once = std::sync::Once::new();
+                SAID.call_once(|| tracing::warn!(error = %e, "a texture could not be made in the PC's memory; it goes to the card as before"));
+            }
+            _ => {}
+        }
+    }
     // A texture the title fills, whose every subresource is uploaded before
     // anything reads it: cut from a block (what the piece held before shows
     // in no texel).

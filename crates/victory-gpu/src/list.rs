@@ -1385,12 +1385,26 @@ extern "system" fn clear_rtv(
                     State(RENDER_TARGET as i32),
                 )]);
             }
-            list.list.ClearRenderTargetView(rtv, color, rects);
+            // NVIDIA's driver ends the process (0xc0000409) when one call
+            // passes 64 rectangles or more: they go 16 at a time.
+            // (After Belobug/VIctory-Belobug-AMD#185.)
+            match rects {
+                Some(all) if all.len() > MAX_CLEAR_RECTS => {
+                    for part in all.chunks(MAX_CLEAR_RECTS) {
+                        list.list.ClearRenderTargetView(rtv, color, Some(part));
+                    }
+                }
+                _ => list.list.ClearRenderTargetView(rtv, color, rects),
+            }
         }
     }
     #[cfg(not(windows))]
     let _ = (this, handle, color, count, rects);
 }
+
+/// The most rectangles one `ClearRenderTargetView` gets (see its caller).
+#[cfg(windows)]
+const MAX_CLEAR_RECTS: usize = 16;
 
 /// `ClearDepthStencilView(handle, flags, depth, stencil, count, rects)`;
 /// flags: 1 depth, 2 stencil.
