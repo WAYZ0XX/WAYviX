@@ -5671,31 +5671,55 @@ pub(crate) fn exact(address: u64, len: u64) -> Option<Arc<Shadow>> {
         return None;
     }
     EXACT_STATS[0].fetch_add(1, Ordering::Relaxed);
+    {
+        let mut guard = EXACT.lock().unwrap_or_else(|e| e.into_inner());
+        let (tick, map) = &mut *guard;
+        *tick += 1;
+        let now = *tick;
+        if let Some((shadow, used)) = map.get_mut(&(address, len)) {
+            *used = now;
+            shadow.used.store(crate::host::moment(), Ordering::Relaxed);
+            return Some(shadow.clone());
+        }
+    }
+    // The host buffer is made with the lock let go: making one is a call into
+    // the driver (and may wait for it), and with the title's views at new ring
+    // positions every frame, the eight threads that translate list calls
+    // queued here for it, one at a time (a timeline on an RTX 2070 SUPER: 4.0
+    // of their 5.0 s waiting on this lock in three frames).
+    let (buffer, data) = host()?.shared_buffer(len.next_multiple_of(256))?;
+    crate::host::name(&buffer, || format!("title view {address:#x}+{len:#x}"));
+    // SAFETY: a live buffer.
+    let gpu = unsafe { buffer.GetGPUVirtualAddress() };
+    let made = Arc::new(Shadow::new(buffer, data, gpu, address, len));
     let mut guard = EXACT.lock().unwrap_or_else(|e| e.into_inner());
     let (tick, map) = &mut *guard;
     *tick += 1;
     let now = *tick;
+    // Another thread made one for the same bytes meanwhile: that one is the
+    // copy (ours goes with its last reference here).
     if let Some((shadow, used)) = map.get_mut(&(address, len)) {
         *used = now;
         shadow.used.store(crate::host::moment(), Ordering::Relaxed);
         return Some(shadow.clone());
     }
-    if map.len() >= MANY {
+    // The size at which the idle copies are looked for next: twice what was
+    // left after the last look (at least `MANY`). Looking at every new copy
+    // once `MANY` were kept asked the driver about each of hundreds of copies
+    // still in use, under the lock, for every new one.
+    static SWEEP_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(MANY);
+    if map.len() >= SWEEP_AT.load(Ordering::Relaxed) {
         // Held by the map alone (no list), its buffer by the copy alone (no
         // slot shows it), and not asked for lately.
         map.retain(|_, (shadow, used)| {
             Arc::strong_count(shadow) > 1 || crate::host::references(&shadow.buffer) > 1 || *used + LATELY > now
         });
+        SWEEP_AT.store((map.len() * 2).max(MANY), Ordering::Relaxed);
     }
-    let (buffer, data) = host()?.shared_buffer(len.next_multiple_of(256))?;
-    crate::host::name(&buffer, || format!("title view {address:#x}+{len:#x}"));
-    // SAFETY: a live buffer.
-    let gpu = unsafe { buffer.GetGPUVirtualAddress() };
-    let shadow = Arc::new(Shadow::new(buffer, data, gpu, address, len));
-    map.insert((address, len), (shadow.clone(), now));
+    map.insert((address, len), (made.clone(), now));
     EXACT_STATS[1].fetch_add(1, Ordering::Relaxed);
     OWN_MADE.fetch_add(1, Ordering::Relaxed);
-    Some(shadow)
+    Some(made)
 }
 
 /// Copies of single views' bytes made since the start.
