@@ -2721,11 +2721,21 @@ fn host_texture_as(
         && CARD_FULL.load(std::sync::atomic::Ordering::Relaxed)
         && spills_now()
     {
-        let pc = D3D12_HEAP_PROPERTIES {
-            Type: D3D12_HEAP_TYPE_CUSTOM,
-            CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,
-            MemoryPoolPreference: D3D12_MEMORY_POOL_L0,
-            ..Default::default()
+        // By default in a default heap, over the card's budget: the system moves
+        // what it must into the PC's memory itself. Made in a custom heap of pool L0
+        // instead (`VICTORY_TEXTURE_SPILL_POOL=pc`), some showed as coloured noise on
+        // an RTX 2070 SUPER (an NPC's face in the first cutscene; screenshots of
+        // the same moment with the default heap show it whole).
+        let on_card = !std::env::var("VICTORY_TEXTURE_SPILL_POOL").is_ok_and(|v| v.trim() == "pc");
+        let pc = if on_card {
+            D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() }
+        } else {
+            D3D12_HEAP_PROPERTIES {
+                Type: D3D12_HEAP_TYPE_CUSTOM,
+                CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,
+                MemoryPoolPreference: D3D12_MEMORY_POOL_L0,
+                ..Default::default()
+            }
         };
         let mut texture: Option<ID3D12Resource> = None;
         // SAFETY: the description has the host layout; the out pointer is ours.
