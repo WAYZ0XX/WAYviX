@@ -33,7 +33,7 @@ if (-not $NoWarm -and (Test-Path $victory)) {
 }
 # The run's log goes to a file, as in the measured runs: printed in the console window, its
 # thousands of lines a minute held the game's threads while the window drew them (stutters).
-$logs = 'D:ictory-data\logs'
+$logs = 'D:\victory-data\logs'
 New-Item -ItemType Directory -Force $logs | Out-Null
 $log = Join-Path $logs ('play-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
 Write-Host "Starting the game. Its log: $log"
