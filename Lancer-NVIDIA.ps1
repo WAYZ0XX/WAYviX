@@ -31,6 +31,12 @@ if (-not $NoWarm -and (Test-Path $victory)) {
     Push-Location $PSScriptRoot
     try { & $victory warm --used 2>$null | Select-Object -Last 1 } catch { Write-Host "warm skipped: $_" } finally { Pop-Location }
 }
+# The run's log goes to a file, as in the measured runs: printed in the console window, its
+# thousands of lines a minute held the game's threads while the window drew them (stutters).
+$logs = 'D:ictory-data\logs'
+New-Item -ItemType Directory -Force $logs | Out-Null
+$log = Join-Path $logs ('play-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+Write-Host "Starting the game. Its log: $log"
 & "$PSScriptRoot\scripts\play.ps1" -Exe 'D:\victory-data\game\game_scarlett_master.exe' -Console series-s -More @{
     VICTORY_D3D12_ADAPTER = 'NVIDIA'; VICTORY_AMBIENT = '1'; VICTORY_AMBIENT_AIR = '1'
     VICTORY_TEXTURE_SPILL = '1'; VICTORY_TEXTURE_SPILL_KEEP_MB = '6144'
@@ -39,4 +45,5 @@ if (-not $NoWarm -and (Test-Path $victory)) {
     VICTORY_CARD_BUFFERS_MIN_KB = '64'; VICTORY_CARD_BUFFERS_MB = '1536'; VICTORY_D3D12_BACKGROUND = '0'
     VICTORY_SUBMIT_FRAMES = '2'; VICTORY_SUBMIT_DEPTH = '128'
     VICTORY_WAVE_WIDE_ONLY = $(if ($Faces) { '369cbe906ea72764' } else { '' })
-}
+} *> $log
+Write-Host "The game has closed. Its log: $log"
