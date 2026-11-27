@@ -1,4 +1,4 @@
-﻿//! Heaps, committed and placed resources, and resource sizes.
+//! Heaps, committed and placed resources, and resource sizes.
 //!
 //! Heaps and resources are host memory and a resource's GPU address is its
 //! CPU address, as on the console; textures also get a host copy, and
@@ -1927,6 +1927,17 @@ pub(crate) fn spills_now() -> bool {
     ok
 }
 
+/// Whether textures made over the card's budget get a low residency priority
+/// (`VICTORY_TEXTURE_SPILL_PRIORITY=1`; off). Five-minute runs on an RTX 2070
+/// SUPER: a little faster most of the time (median 153 against 165 ms a frame)
+/// but with one stall of 1 to 3 s while the system moved them back; without,
+/// no frame past the loading took more than 233 ms.
+#[cfg(windows)]
+fn spill_low_priority() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_TEXTURE_SPILL_PRIORITY").is_some_and(|v| v == "1"))
+}
+
 /// Textures made in the PC's memory so far (count, bytes).
 #[cfg(windows)]
 #[allow(dead_code)]
@@ -2751,6 +2762,16 @@ fn host_texture_as(
         };
         match (made, texture) {
             (Ok(()), Some(t)) => {
+                // Made over the card's budget: the first the system moves to the
+                // PC's memory when it must, not the render targets and buffers the
+                // frame waits for (`VICTORY_TEXTURE_SPILL_PRIORITY=1`; off by default).
+                if on_card && spill_low_priority()
+                    && let Ok(device1) = windows::core::Interface::cast::<ID3D12Device1>(&host.device)
+                    && let Ok(pageable) = windows::core::Interface::cast::<ID3D12Pageable>(&t)
+                {
+                    // SAFETY: a live resource of this device.
+                    let _ = unsafe { device1.SetResidencyPriority(1, &Some(pageable), &D3D12_RESIDENCY_PRIORITY_LOW) };
+                }
                 // SAFETY: the description has the host layout; a plain query.
                 let bytes = unsafe {
                     host.device.GetResourceAllocationInfo(0, &[(&raw const d).cast::<D3D12_RESOURCE_DESC>().read()])
