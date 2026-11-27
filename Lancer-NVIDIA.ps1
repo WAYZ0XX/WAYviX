@@ -18,6 +18,12 @@
 #   VICTORY_SUBMIT_FRAMES=2 / VICTORY_SUBMIT_DEPTH=128: the title starts its next frame while ours
 #     prepares the last one (default 1: they took turns, 197 ms a frame waiting at presents).
 #     4.10 -> 4.59 fps, 0 ms at presents.
+# No pause for textures (5-minute runs, screenshots every 5 s):
+#   VICTORY_TEXTURE_STAGE_MS=16 / VICTORY_TEXTURE_CATCHUP=0: at most 16 ms of texture work a frame
+#     (250, or 750 with a backlog, held the frame); what is not ready shows a few frames later.
+#   VICTORY_TEXTURE_POOL=0: each texture made on its own, zeroed, not cut from a block: a texture
+#     shown before its upload is dark, not the coloured noise of what the block held before.
+#   Median frame 166 -> 129 ms; slowest after loading 233 -> 408 ms (one scene change).
 # VICTORY_AMBIENT_AIR=1 bounds the blue sky light the air holds without rays.
 # NVIDIA fixes: low 4 GiB kept at start (#157), clear rectangles 16 at a time (#185).
 # -Faces: the console wave64 program 369cbe906ea72764, which the NVIDIA driver refused at every
@@ -48,6 +54,7 @@ Write-Host "Starting the game. Its log: $log"
     VICTORY_PIPELINE_BOOK = '1'; VICTORY_PIPELINE_WAIT_MS = '24'
     VICTORY_CARD_BUFFERS_MIN_KB = '64'; VICTORY_CARD_BUFFERS_MB = '1536'; VICTORY_D3D12_BACKGROUND = '0'
     VICTORY_SUBMIT_FRAMES = '2'; VICTORY_SUBMIT_DEPTH = '128'
+    VICTORY_TEXTURE_STAGE_MS = '16'; VICTORY_TEXTURE_CATCHUP = '0'; VICTORY_TEXTURE_POOL = '0'
     VICTORY_WAVE_WIDE_ONLY = $(if ($Faces) { '369cbe906ea72764' } else { '' })
     VICTORY_TEXTURE_SPILL_KEEP_S = $(if ($KeepTextures) { '30' } else { '0' })
 } *> $log
