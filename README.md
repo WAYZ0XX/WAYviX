@@ -8,17 +8,17 @@ This fork is tuned for **NVIDIA cards with 8 GB of video memory** and **32 GB of
 **This repository contains no game files, code or assets.** You need your own copy
 of the game. It is not affiliated with or endorsed by the game's developer or publisher.
 
-## Where it stands (2026-11-26)
+## Where it stands (2026-11-27)
 
 Tested on one machine: Windows 11, Intel Core i5-12600KF, 32 GB RAM, NVIDIA
 GeForce RTX 2070 SUPER (8 GB), ray tracing off, 40 GB page file.
 
 | | |
 |---|---|
-| Frame rate in the world | **5-9 fps** (4.8-6.3 fps in 5-minute measured runs, 9 fps peaks in the first cutscene) |
-| Textures | almost all loaded; those that do not fit in the 8 GB go to RAM (`VICTORY_TEXTURE_SPILL`) |
+| Frame rate in the world | **5-12 fps**, median 129 ms a frame (about 7.5 fps) in 5-minute measured runs |
+| Textures | almost all loaded; those that do not fit in the 8 GB are made over the budget and Windows moves them to RAM. The game does not pause for them: a texture not ready yet shows dark for a moment |
 | Facial expressions | **not working**: faces stay frozen (see below) |
-| Known glitches | an occasional green flash in the first cutscene; some NPC faces with coloured polygons |
+| Known glitches | simplified (low-poly) characters for a second or two after some camera cuts, while the game streams them; eyes sometimes look glowing white |
 | Memory | about 26 GB private; a page file of 40 GB on a drive with room is needed with 32 GB of RAM |
 
 Not working yet on NVIDIA: a few console compute programs written for 64-lane waves,
@@ -37,13 +37,16 @@ Measured one change at a time, five-minute runs in the world:
 | The driver's background shader work off (`VICTORY_D3D12_BACKGROUND=0`) | 4.1 |
 | Two frames in flight (`VICTORY_SUBMIT_FRAMES=2`) | 4.6 |
 | `shadow::exact`: host buffers made outside the global lock, idle copies swept amortised | 6.0-6.3 |
+| At most 16 ms of texture work a frame, no catch-up, each texture made on its own (`VICTORY_TEXTURE_STAGE_MS=16`, `VICTORY_TEXTURE_CATCHUP=0`, `VICTORY_TEXTURE_POOL=0`) | median 166 -> 129 ms a frame |
 
 Code changes:
 
-- **Textures in RAM when the card is full** (`VICTORY_TEXTURE_SPILL=1`): textures the title
-  fills go to a system-memory heap (pool L0) instead of staying missing; stops while less than
-  `VICTORY_TEXTURE_SPILL_KEEP_MB` (6144) of commit is left. Aliasing barriers are given only
-  to textures placed in a block (NVIDIA refused the list otherwise).
+- **Textures over the card's budget when it is full** (`VICTORY_TEXTURE_SPILL=1`): textures the
+  title fills are made in a default heap past the budget, and Windows moves to RAM what it must,
+  instead of staying missing; stops while less than `VICTORY_TEXTURE_SPILL_KEEP_MB` (6144) of
+  commit is left. (Made in a system-memory heap of pool L0 instead, `VICTORY_TEXTURE_SPILL_POOL=pc`,
+  some showed as coloured noise on the RTX 2070 SUPER.) Aliasing barriers are given only to
+  textures placed in a block (NVIDIA refused the list otherwise).
 - **Translation threads no longer queue on one lock** (`shadow::exact`).
 - **NVIDIA fixes ported** from Belobug pull requests: address space below 4 GiB kept at start
   (#157), clear rectangles 16 at a time (#185).
@@ -54,10 +57,12 @@ Code changes:
 
 1. Build: `cargo build --locked --profile diag -p victory --features diagnostics`
 2. Copy `victory.example.toml` to `victory.toml` and set your paths (outside this folder).
-3. Prepare the shaders once: `target\diagictory.exe shaders <the shader archives>`,
+3. Use a page file whose initial size is its maximum (40 GB here): the overflow's safety check
+   reads the limit Windows has now, not the one it may grow to.
+4. Prepare the shaders once: `target\diagictory.exe shaders <the shader archives>`,
    then `target\diagictory.exe warm` (all known pipelines, about an hour once).
-4. In the NVIDIA Control Panel, set **Shader Cache Size** to **Unlimited**.
-5. Edit the game path in `Lancer-NVIDIA.ps1`, then run it from a normal (not administrator)
+5. In the NVIDIA Control Panel, set **Shader Cache Size** to **Unlimited**.
+6. Edit the game path in `Lancer-NVIDIA.ps1`, then run it from a normal (not administrator)
    PowerShell window. It builds new pipelines first (`warm --used`), then starts the game with
    every setting above.
 
